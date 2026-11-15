@@ -669,14 +669,14 @@ def _gguf_audio_model_keys() -> list[str]:
     )
 
 
-def _filter_kwargs_for_callable(fn, kwargs: dict) -> dict:
+def _filter_kwargs_for_callable(fn, kwargs: dict, *, allow_forwarded: bool = True) -> dict:
     try:
         sig = inspect.signature(fn)
     except Exception:
-        return dict(kwargs)
+        return dict(kwargs) if allow_forwarded else {}
 
     params = list(sig.parameters.values())
-    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params):
+    if allow_forwarded and any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params):
         return dict(kwargs)
 
     allowed: set[str] = set()
@@ -728,10 +728,14 @@ def _unexpected_kwarg_names_from_type_error(exc: TypeError) -> list[str]:
 
 
 def _filter_mmproj_handler_kwargs(handler_cls, kwargs: dict) -> dict:
-    filtered = _filter_kwargs_for_callable(getattr(handler_cls, "__init__", handler_cls), kwargs)
-    handler_name = getattr(handler_cls, "__name__", "")
-    if "Qwen" not in handler_name:
-        filtered.pop("force_reasoning", None)
+    constructor = handler_cls.__init__
+    filtered = _filter_kwargs_for_callable(constructor, kwargs)
+    # Handlers forward shared projector options through **kwargs. Their base
+    # constructor rejects reasoning options the model-specific handler did not consume.
+    reasoning_kwargs = {
+        key: filtered.pop(key) for key in ("force_reasoning", "enable_thinking") if key in filtered
+    }
+    filtered.update(_filter_kwargs_for_callable(constructor, reasoning_kwargs, allow_forwarded=False))
     return filtered
 
 

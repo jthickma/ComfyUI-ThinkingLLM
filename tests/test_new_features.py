@@ -3912,7 +3912,8 @@ class TestGGUFWindllRuntimeFallback(unittest.TestCase):
                 enter_events.append("exit")
 
         class Qwen3VLChatHandler:
-            def __init__(self, **kwargs):
+            def __init__(self, *, force_reasoning, **kwargs):
+                kwargs["force_reasoning"] = force_reasoning
                 enter_events.append(("chat", sorted(kwargs)))
 
         class DummyLlama:
@@ -4006,6 +4007,36 @@ class TestGGUFWindllRuntimeFallback(unittest.TestCase):
                 "image_min_tokens",
             }.issubset(set(enter_events[4][1]))
         )
+
+    def test_qwen35_handler_forwards_only_shared_projector_kwargs(self):
+        class ProjectorHandler:
+            def __init__(self, *, clip_model_path, image_min_tokens, image_max_tokens, verbose):
+                self.projector_settings = (clip_model_path, image_min_tokens, image_max_tokens, verbose)
+
+        class Qwen35ChatHandler(ProjectorHandler):
+            def __init__(self, *, enable_thinking=True, **kwargs):
+                super().__init__(**kwargs)
+                self.enable_thinking = enable_thinking
+
+        with mock.patch.dict(sys.modules, build_loader_test_stubs(), clear=False):
+            module = load_module_from_file("AILab_QwenVL_GGUF.py", "thinkingllm_qwen35_handler_kwargs_test")
+
+        for enable_thinking in (False, True):
+            with self.subTest(enable_thinking=enable_thinking):
+                kwargs = module._filter_mmproj_handler_kwargs(
+                    Qwen35ChatHandler,
+                    {
+                        "clip_model_path": "mmproj.gguf",
+                        "image_min_tokens": 1024,
+                        "image_max_tokens": 2048,
+                        "verbose": False,
+                        "force_reasoning": False,
+                        "enable_thinking": enable_thinking,
+                    },
+                )
+                handler = Qwen35ChatHandler(**kwargs)
+                self.assertEqual(handler.projector_settings, ("mmproj.gguf", 1024, 2048, False))
+                self.assertIs(handler.enable_thinking, enable_thinking)
 
     def test_gemma4_chat_handler_does_not_receive_qwen_force_reasoning_kwarg(self):
         captured_chat_kwargs = []
